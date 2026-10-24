@@ -1,93 +1,7 @@
-import sys
-import types
-
 import pytest
 
-# Stub out external dependencies before importing the module under test
-
-
-def _install_fake_gclib() -> None:
-    fake_gclib = types.ModuleType("gclib")
-
-    class Error(Exception):
-        pass
-
-    class Controller:
-        def __init__(self, ipaddr, baud_rate=None):
-            self.ipaddr = ipaddr
-            self.baud_rate = baud_rate
-
-        def command(self, cmd):
-            return ""
-
-        def close(self):
-            pass
-
-        def open(self):
-            pass
-
-    fake_gclib.Error = Error
-    fake_gclib.Controller = Controller
-    sys.modules["gclib"] = fake_gclib
-
-
-def _install_fake_hardware_base() -> None:
-    fake_module = types.ModuleType("hardware_device_base")
-
-    class HardwareDeviceBase:
-        def __init__(self, log=True, logfile=""):
-            self._log = log
-            self._logfile = logfile
-            self._connected = False
-
-        def report_info(self, msg):
-            pass
-
-        def report_error(self, msg):
-            pass
-
-        def _set_connected(self, value):
-            self._connected = value
-
-        def is_connected(self):
-            return self._connected
-
-    fake_module.HardwareDeviceBase = HardwareDeviceBase
-    sys.modules["hardware_device_base"] = fake_module
-
-
-_install_fake_gclib()
-_install_fake_hardware_base()
-
-dmc30000 = __import__("dmc30000")
-DMC30000 = dmc30000.DMC30000
-
-
-# Helpers
-class RecordingClient:
-    """Fake gclib.Controller that records every command string it receives."""
-
-    def __init__(self, reply: str = "1.2345"):
-        self.commands: list[str] = []
-        self.reply = reply
-
-    def command(self, cmd: str) -> str:
-        self.commands.append(cmd)
-        return self.reply
-
-    def close(self):
-        pass
-
-    def open(self):
-        pass
-
-
-class FailingClient(RecordingClient):
-    """Fake client whose command() always raises, to test failure paths."""
-
-    def command(self, cmd: str) -> str:
-        self.commands.append(cmd)
-        raise dmc30000.gclib.Error("simulated failure")
+from conftest import FailingClient, RecordingClient
+from galil import DMC30000, dmc30000
 
 
 @pytest.fixture
@@ -157,7 +71,7 @@ def test_getter_returns_none_on_unparsable_reply(controller):
 def test_getter_returns_none_when_command_fails(controller):
     controller._client = FailingClient()
     assert controller.get_analog_output(1) is None
-    assert controller._client.commands == ["MG@AO[1]"]
+    assert controller._client.commands == ["MG@AO[1]", "TC1"]
 
 
 # Initialize
@@ -171,7 +85,7 @@ def test_initialize_sends_ao1_setup_in_order(controller):
 def test_initialize_stops_at_first_failure(controller):
     controller._client = FailingClient()
     assert controller.initialize() is False
-    assert controller._client.commands == ["MO A"]
+    assert controller._client.commands == ["MO A", "TC1"]
 
 
 # No-client guard rails (both getter and setter route through _send_command)
@@ -213,3 +127,16 @@ def test_send_command_returns_false_if_not_connected():
     """_send_command() with no client (never connected) must return False."""
     ctrl = DMC30000(log=False)
     assert ctrl._send_command("MG@AO[1]") is False
+
+
+def test_axis_status_is_for_axis_a_only(controller):
+    controller._client.reply = "0"
+    controller.get_axis_status("A")
+    assert controller._client.commands == ["MG_TSA"]
+    with pytest.raises(ValueError):
+        controller.get_axis_status("B")
+
+
+def test_zero_outputs_sets_both_analog_outputs(controller):
+    assert controller.zero_outputs() is True
+    assert controller._client.commands == ["AO 1,0.0", "AO 2,0.0"]

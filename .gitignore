@@ -1,6 +1,7 @@
 !.gitignore
 # egg info
 *.egg-info/
+build/
 
 # venv
 .venv
@@ -8,3 +9,6 @@
 
 # cache
 __pycache__/
+
+# manuals
+*.pdf
